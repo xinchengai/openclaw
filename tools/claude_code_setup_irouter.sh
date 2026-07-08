@@ -287,6 +287,10 @@ api_key = os.environ["API_KEY"]
 
 env["ANTHROPIC_BASE_URL"] = os.environ["BASE_URL"]
 env["ANTHROPIC_MODEL"] = model_id
+env["ANTHROPIC_SMALL_FAST_MODEL"] = model_id
+env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = model_id
+env["ANTHROPIC_DEFAULT_OPUS_MODEL"] = model_id
+env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = model_id
 env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = os.environ["MAX_CONTEXT_TOKENS"]
 env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = os.environ["MAX_OUTPUT_TOKENS"]
 env["API_TIMEOUT_MS"] = env.get("API_TIMEOUT_MS", "3000000")
