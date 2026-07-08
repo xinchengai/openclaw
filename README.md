@@ -27,6 +27,10 @@ OPENCLAW_API_KEY="your-api-key" ./tools/openclaw_setup_irouter.sh --model "MiniM
 
 ## Configure Claude Code with irouter.io
 
+This script installs Claude Code through npm by default, because some servers
+return `403` when downloading the official native installer from `claude.ai`.
+Node.js 18+ and npm are required.
+
 Run interactively:
 
 ```bash
@@ -52,4 +56,10 @@ If your gateway expects `X-Api-Key` instead of `Authorization: Bearer`, use:
 
 ```bash
 CLAUDE_IROUTER_API_KEY="your-api-key" ./tools/claude_code_setup_irouter.sh --auth-header api-key
+```
+
+Try the official native installer first, then fall back to npm:
+
+```bash
+CLAUDE_IROUTER_API_KEY="your-api-key" ./tools/claude_code_setup_irouter.sh --install-method auto
 ```

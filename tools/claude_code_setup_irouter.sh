@@ -6,8 +6,9 @@ DEFAULT_MODEL="${CLAUDE_IROUTER_DEFAULT_MODEL:-MiniMax-M2.7}"
 MODEL_ID="${CLAUDE_IROUTER_MODEL_ID:-}"
 API_KEY="${CLAUDE_IROUTER_API_KEY:-}"
 AUTH_HEADER="${CLAUDE_IROUTER_AUTH_HEADER:-auth-token}"
-INSTALL_METHOD="${CLAUDE_CODE_INSTALL_METHOD:-native}"
+INSTALL_METHOD="${CLAUDE_CODE_INSTALL_METHOD:-npm}"
 SETTINGS_PATH="${CLAUDE_SETTINGS_PATH:-$HOME/.claude/settings.json}"
+CLAUDE_JSON_PATH="${CLAUDE_JSON_PATH:-$HOME/.claude.json}"
 MAX_CONTEXT_TOKENS="${CLAUDE_CODE_MAX_CONTEXT_TOKENS_VALUE:-1000000}"
 MAX_OUTPUT_TOKENS="${CLAUDE_CODE_MAX_OUTPUT_TOKENS_VALUE:-65536}"
 RUN_SMOKE_TEST=0
@@ -31,7 +32,8 @@ Options:
   --auth-header MODE         auth-token, api-key, or both. Default: auth-token
                             auth-token writes ANTHROPIC_AUTH_TOKEN (Bearer token)
                             api-key writes ANTHROPIC_API_KEY (X-Api-Key)
-  --install-method METHOD    native, npm, or none. Default: native
+  --install-method METHOD    npm, native, auto, or none. Default: npm
+                            npm avoids the common 403 from https://claude.ai/install.sh
   --settings PATH            Claude Code settings path. Default: ~/.claude/settings.json
   --max-context-tokens N     CLAUDE_CODE_MAX_CONTEXT_TOKENS. Default: 1000000
   --max-output-tokens N      CLAUDE_CODE_MAX_OUTPUT_TOKENS. Default: 65536
@@ -45,6 +47,7 @@ Environment variables:
   CLAUDE_IROUTER_AUTH_HEADER
   CLAUDE_CODE_INSTALL_METHOD
   CLAUDE_SETTINGS_PATH
+  CLAUDE_JSON_PATH
 
 Examples:
   tools/claude_code_setup_irouter.sh
@@ -138,8 +141,8 @@ case "$AUTH_HEADER" in
 esac
 
 case "$INSTALL_METHOD" in
-  native|npm|none) ;;
-  *) die "--install-method must be native, npm, or none" ;;
+  npm|native|auto|none) ;;
+  *) die "--install-method must be npm, native, auto, or none" ;;
 esac
 
 is_positive_integer "$MAX_CONTEXT_TOKENS" || die "--max-context-tokens must be a positive integer"
@@ -160,6 +163,39 @@ fi
 
 export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$HOME/.npm/bin:$PATH"
 
+ensure_node_npm() {
+  require_cmd node
+  require_cmd npm
+
+  local node_major
+  node_major="$(node -v | sed -E 's/^v([0-9]+).*/\1/')"
+  if [[ -z "$node_major" || "$node_major" -lt 18 ]]; then
+    die "Node.js 18+ is required for npm install. Current version: $(node -v 2>/dev/null || echo unknown)"
+  fi
+}
+
+install_with_npm() {
+  ensure_node_npm
+  echo "Installing Claude Code with npm..."
+  if npm install -g @anthropic-ai/claude-code; then
+    return 0
+  fi
+
+  if [[ "$(id -u)" -ne 0 ]] && command -v sudo >/dev/null 2>&1; then
+    echo "npm global install failed without sudo; retrying with sudo..."
+    run_sudo npm install -g @anthropic-ai/claude-code
+    return 0
+  fi
+
+  return 1
+}
+
+install_with_native() {
+  require_cmd curl
+  echo "Installing Claude Code with the official native installer..."
+  curl -fsSL https://claude.ai/install.sh | bash
+}
+
 install_claude_code() {
   if command -v claude >/dev/null 2>&1; then
     echo "Claude Code is already installed: $(command -v claude)"
@@ -169,14 +205,16 @@ install_claude_code() {
 
   case "$INSTALL_METHOD" in
     native)
-      require_cmd curl
-      echo "Installing Claude Code with the official native installer..."
-      curl -fsSL https://claude.ai/install.sh | bash
+      install_with_native
       ;;
     npm)
-      require_cmd npm
-      echo "Installing Claude Code with npm..."
-      npm install -g @anthropic-ai/claude-code
+      install_with_npm
+      ;;
+    auto)
+      if ! install_with_native; then
+        echo "Native installer failed; falling back to npm install..."
+        install_with_npm
+      fi
       ;;
     none)
       die "claude is not installed or not on PATH; rerun without --install-method none"
@@ -216,7 +254,7 @@ ensure_python3() {
 write_claude_settings() {
   ensure_python3
 
-  export SETTINGS_PATH BASE_URL MODEL_ID API_KEY AUTH_HEADER MAX_CONTEXT_TOKENS MAX_OUTPUT_TOKENS
+  export SETTINGS_PATH CLAUDE_JSON_PATH BASE_URL MODEL_ID API_KEY AUTH_HEADER MAX_CONTEXT_TOKENS MAX_OUTPUT_TOKENS
   python3 <<'PY'
 import json
 import os
@@ -249,12 +287,10 @@ api_key = os.environ["API_KEY"]
 
 env["ANTHROPIC_BASE_URL"] = os.environ["BASE_URL"]
 env["ANTHROPIC_MODEL"] = model_id
-env["ANTHROPIC_CUSTOM_MODEL_OPTION"] = model_id
-env["ANTHROPIC_CUSTOM_MODEL_OPTION_NAME"] = model_id
-env["ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION"] = f"irouter.io gateway model: {model_id}"
 env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = os.environ["MAX_CONTEXT_TOKENS"]
 env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = os.environ["MAX_OUTPUT_TOKENS"]
-env["API_TIMEOUT_MS"] = env.get("API_TIMEOUT_MS", "1200000")
+env["API_TIMEOUT_MS"] = env.get("API_TIMEOUT_MS", "3000000")
+env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
 
 if auth_header in ("auth-token", "both"):
     env["ANTHROPIC_AUTH_TOKEN"] = api_key
@@ -268,6 +304,25 @@ else:
 
 settings_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 settings_path.chmod(0o600)
+
+claude_json_path = Path(os.environ["CLAUDE_JSON_PATH"]).expanduser()
+claude_json_path.parent.mkdir(parents=True, exist_ok=True)
+claude_data = {}
+if claude_json_path.exists() and claude_json_path.stat().st_size > 0:
+    try:
+        claude_data = json.loads(claude_json_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        backup = claude_json_path.with_suffix(claude_json_path.suffix + ".bak")
+        backup.write_bytes(claude_json_path.read_bytes())
+        print(f"Existing Claude JSON was invalid; backed it up to {backup}")
+        claude_data = {}
+
+if not isinstance(claude_data, dict):
+    claude_data = {}
+
+claude_data["hasCompletedOnboarding"] = True
+claude_json_path.write_text(json.dumps(claude_data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+claude_json_path.chmod(0o600)
 PY
 }
 
@@ -275,6 +330,7 @@ echo "Setting up Claude Code for irouter.io..."
 echo "  base url:    $BASE_URL"
 echo "  model:       $MODEL_ID"
 echo "  auth header: $AUTH_HEADER"
+echo "  installer:   $INSTALL_METHOD"
 echo "  settings:    $SETTINGS_PATH"
 
 install_claude_code
