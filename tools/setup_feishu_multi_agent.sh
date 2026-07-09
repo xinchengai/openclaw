@@ -5,8 +5,6 @@ SCRIPT_VERSION="1.0.0"
 OPENCLAW_CONFIG="${OPENCLAW_CONFIG:-$HOME/.openclaw/openclaw.json}"
 OPENCLAW_DATA_DIR="${OPENCLAW_DATA_DIR:-$HOME/.openclaw}"
 DOMAIN="feishu"
-OWNER_OPEN_ID=""
-GROUP_IDS=()
 MAIN_CONFIG=""
 AGENT_CONFIGS=()
 NO_RESTART=0
@@ -37,14 +35,11 @@ Interactive mode:
 Non-interactive example:
   $0 \\
     --domain feishu \\
-    --group-id oc_xxx \\
     --agent xiezuo:写作助理:cli_xiezuo:xiezuo_secret \\
     --agent cehua:策划助理:cli_cehua:cehua_secret
 
 Options:
   --domain feishu|lark|https://...        Feishu/Lark API domain. Default: feishu
-  --owner-open-id ou_xxx                  Your Feishu open_id. Inherits channels.feishu.allowFrom[0] by default.
-  --group-id oc_xxx                       Allowed Feishu group chat_id. Can repeat.
   --main accountId:name                   Main Feishu account. Inherits existing onboarded appId/appSecret.
   --main accountId:appId:appSecret:name   Optional explicit main account override.
   --agent accountId:name:appId:appSecret
@@ -57,7 +52,7 @@ Notes:
   - Feishu bot events should use WebSocket / persistent connection.
   - Run OpenClaw Feishu onboarding first for the main bot: openclaw channels login --channel feishu
   - Each Feishu app should subscribe to im.message.receive_v1.
-  - Add every bot app to the target Feishu group before testing.
+  - Add every bot app to the Feishu groups where it should reply.
 EOF
 }
 
@@ -134,51 +129,12 @@ ensure_feishu_plugin_hint() {
   warn "If gateway startup fails, run: openclaw channels login --channel feishu"
 }
 
-inherit_owner_open_id() {
-  [[ -z "$OWNER_OPEN_ID" ]] || return 0
-  [[ -f "$OPENCLAW_CONFIG" ]] || return 0
-
-  local inherited
-  inherited="$(python3 - "$OPENCLAW_CONFIG" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1]).expanduser()
-try:
-    config = json.loads(path.read_text(encoding="utf-8"))
-except Exception:
-    raise SystemExit(0)
-
-feishu = config.get("channels", {}).get("feishu", {})
-allow_from = feishu.get("allowFrom", [])
-if isinstance(allow_from, list):
-    for item in allow_from:
-        if isinstance(item, str) and item.startswith("ou_"):
-            print(item)
-            break
-PY
-)"
-
-  if [[ -n "$inherited" ]]; then
-    OWNER_OPEN_ID="$inherited"
-    info "Inherited owner open_id from existing Feishu config: $OWNER_OPEN_ID"
-  fi
-}
-
 collect_interactive() {
   echo
   echo "============================================"
   echo "   OpenClaw Feishu Multi-Agent Setup"
   echo "============================================"
   echo
-
-  inherit_owner_open_id
-  if [[ -z "$OWNER_OPEN_ID" ]]; then
-    read -r -p "Your Feishu open_id (ou_xxx): " OWNER_OPEN_ID
-  fi
-  read -r -p "Allowed group chat_id (oc_xxx): " input_group_id
-  GROUP_IDS=("$input_group_id")
 
   MAIN_CONFIG="${MAIN_CONFIG:-main:主助理}"
   info "Main account is fixed as main:主助理 and inherits onboarded appId/appSecret."
@@ -201,12 +157,6 @@ collect_interactive() {
 
 validate_inputs() {
   [[ "$DOMAIN" == "feishu" || "$DOMAIN" == "lark" || "$DOMAIN" =~ ^https:// ]] || die "--domain must be feishu, lark, or an https:// URL"
-  [[ "$OWNER_OPEN_ID" =~ ^ou_ ]] || die "owner open_id should look like ou_xxx"
-  [[ "${#GROUP_IDS[@]}" -gt 0 ]] || die "At least one --group-id is required"
-  local group_id
-  for group_id in "${GROUP_IDS[@]}"; do
-    [[ "$group_id" =~ ^oc_ ]] || die "group chat_id should look like oc_xxx: $group_id"
-  done
   [[ -n "$MAIN_CONFIG" ]] || die "--main is required"
   parse_main_config "$MAIN_CONFIG"
 
@@ -220,16 +170,18 @@ validate_inputs() {
   local seen_agent_ids=" feishu-main "
 
   local agent
-  for agent in "${AGENT_CONFIGS[@]}"; do
-    parse_agent_config_line "$agent"
-    local account_id name app_id app_secret agent_id
-    IFS=':' read -r account_id name app_id app_secret <<<"$agent"
-    agent_id="feishu-$(sanitize_id "$account_id")"
-    [[ "$seen_accounts" != *" $account_id "* ]] || die "Duplicate accountId: $account_id"
-    [[ "$seen_agent_ids" != *" $agent_id "* ]] || die "Duplicate generated agent id: $agent_id"
-    seen_accounts="${seen_accounts}${account_id} "
-    seen_agent_ids="${seen_agent_ids}${agent_id} "
-  done
+  if ((${#AGENT_CONFIGS[@]})); then
+    for agent in "${AGENT_CONFIGS[@]}"; do
+      parse_agent_config_line "$agent"
+      local account_id name app_id app_secret agent_id
+      IFS=':' read -r account_id name app_id app_secret <<<"$agent"
+      agent_id="feishu-$(sanitize_id "$account_id")"
+      [[ "$seen_accounts" != *" $account_id "* ]] || die "Duplicate accountId: $account_id"
+      [[ "$seen_agent_ids" != *" $agent_id "* ]] || die "Duplicate generated agent id: $agent_id"
+      seen_accounts="${seen_accounts}${account_id} "
+      seen_agent_ids="${seen_agent_ids}${agent_id} "
+    done
+  fi
 }
 
 write_workspace_file() {
@@ -285,7 +237,7 @@ ${roster}
 - sessions_send 的目标必须是 sessions_list 返回的 sessionKey 或 sessionId。
 - 不要把飞书名称、群名、@用户名或 accountId 当作 sessions_send 目标。
 - 优先选择和当前用户请求同一个飞书群对应的 group session。
-- 如果找不到子 agent 的同群会话，提示用户先在该群 @对应子机器人发送 ping，建立群会话。
+- 如果找不到子 agent 的同群会话，提示用户先在对应群里 @对应子机器人发送 ping，建立群会话。
 - 派单后告诉用户任务已安排即可，不要等待 sessions_send 的超时结果。
 
 ## 群聊规则
@@ -320,14 +272,13 @@ ${roster}
 ## 任务执行
 - 读取任务里的原始用户需求和来源群说明。
 - 优先把最终结果直接回复到来源飞书群会话。
-- 如果当前没有可用的来源群会话，回复主 agent：没有可用的来源群会话，请先在群里 @我 发送 ping 建立会话。
+- 如果当前没有可用的来源群会话，回复主 agent：没有可用的来源群会话，请先在对应群里 @我 发送 ping 建立会话。
 - 完成任务后停止，不要等待进一步指令。"
   done
 }
 
 build_config() {
-  export OPENCLAW_CONFIG OPENCLAW_DATA_DIR DOMAIN OWNER_OPEN_ID MAIN_CONFIG DRY_RUN
-  export GROUP_IDS_JOINED="$(IFS=$'\n'; printf '%s' "${GROUP_IDS[*]}")"
+  export OPENCLAW_CONFIG OPENCLAW_DATA_DIR DOMAIN MAIN_CONFIG DRY_RUN
   export AGENT_CONFIGS_JOINED="$(IFS=$'\n'; printf '%s' "${AGENT_CONFIGS[*]:-}")"
 
   python3 <<'PY'
@@ -342,10 +293,8 @@ from pathlib import Path
 config_path = Path(os.environ["OPENCLAW_CONFIG"]).expanduser()
 openclaw_home = Path(os.environ["OPENCLAW_DATA_DIR"]).expanduser()
 domain = os.environ["DOMAIN"]
-owner_open_id = os.environ["OWNER_OPEN_ID"]
 dry_run = os.environ["DRY_RUN"] == "1"
 
-group_ids = [x for x in os.environ.get("GROUP_IDS_JOINED", "").splitlines() if x]
 agent_lines = [x for x in os.environ.get("AGENT_CONFIGS_JOINED", "").splitlines() if x]
 
 def sanitize_id(value: str) -> str:
@@ -439,11 +388,6 @@ bindings = [
     if not (
         isinstance(b, dict)
         and b.get("match", {}).get("channel") == "feishu"
-        and (
-            b.get("agentId") in old_managed_agent_ids
-            or b.get("agentId") in managed_agent_ids
-            or b.get("match", {}).get("accountId") in account_ids
-        )
     )
 ]
 bindings.append({"agentId": main["agentId"], "match": {"channel": "feishu", "accountId": main["accountId"]}})
@@ -470,7 +414,7 @@ config["tools"]["agentToAgent"] = agent_to_agent
 config["session"] = config.get("session", {})
 if not isinstance(config["session"], dict):
     config["session"] = {}
-config["session"]["dmScope"] = "main"
+config["session"]["dmScope"] = "per-channel-peer"
 
 config.setdefault("channels", {})
 feishu = config["channels"].get("feishu", {})
@@ -528,18 +472,6 @@ for agent in agents:
         "enabled": True,
     }
 
-groups = feishu.get("groups", {})
-if not isinstance(groups, dict):
-    groups = {}
-for group_id in group_ids:
-    current = groups.get(group_id, {})
-    if not isinstance(current, dict):
-        current = {}
-    current["enabled"] = True
-    current["requireMention"] = True
-    current.pop("allowFrom", None)
-    groups[group_id] = current
-
 feishu.update({
     "enabled": True,
     "connectionMode": "websocket",
@@ -548,11 +480,13 @@ feishu.update({
     "accounts": accounts,
     "dmPolicy": "open",
     "allowFrom": ["*"],
-    "groupPolicy": "allowlist",
+    "groupPolicy": "open",
     "requireMention": True,
-    "groups": groups,
     "streaming": True,
 })
+feishu.pop("groups", None)
+feishu.pop("appId", None)
+feishu.pop("appSecret", None)
 feishu.pop("groupAllowFrom", None)
 config["channels"]["feishu"] = feishu
 
@@ -595,21 +529,12 @@ run_post_checks() {
 }
 
 main() {
+  local started_with_args=$#
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --domain)
         [[ $# -ge 2 ]] || die "--domain requires a value"
         DOMAIN="$2"
-        shift 2
-        ;;
-      --owner-open-id)
-        [[ $# -ge 2 ]] || die "--owner-open-id requires a value"
-        OWNER_OPEN_ID="$2"
-        shift 2
-        ;;
-      --group-id)
-        [[ $# -ge 2 ]] || die "--group-id requires a value"
-        GROUP_IDS+=("$2")
         shift 2
         ;;
       --main)
@@ -642,9 +567,8 @@ main() {
 
   require_cmd python3
   check_openclaw
-  inherit_owner_open_id
   MAIN_CONFIG="${MAIN_CONFIG:-main:主助理}"
-  if [[ "${#GROUP_IDS[@]}" -eq 0 ]]; then
+  if [[ "$started_with_args" -eq 0 ]]; then
     collect_interactive
   fi
   validate_inputs
@@ -661,7 +585,7 @@ main() {
   echo "  1. Each app is published/available."
   echo "  2. Each app subscribes to im.message.receive_v1."
   echo "  3. Event connection uses WebSocket / persistent connection."
-  echo "  4. Add every bot to the target group."
+  echo "  4. Add every bot to each Feishu group where it should reply."
   echo "  5. In the group, @each sub bot with ping before asking the main bot to delegate."
 }
 

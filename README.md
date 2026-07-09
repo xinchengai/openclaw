@@ -80,18 +80,17 @@ Non-interactive example:
 
 ```bash
 ./setup_feishu_multi_agent.sh \
-  --group-id oc_xxx \
   --agent xiezuo:写作助理:cli_xiezuo:xiezuo_secret \
   --agent cehua:策划助理:cli_cehua:cehua_secret
 ```
 
-The script inherits your Feishu user `open_id` from `channels.feishu.allowFrom[0]`. The main account is fixed as `main:主助理` and inherits the already-onboarded Feishu `appId` / `appSecret` from `~/.openclaw/openclaw.json`. Run this first if Feishu has not been onboarded yet:
+The main account is fixed as `main:主助理` and inherits the already-onboarded Feishu `appId` / `appSecret` from `~/.openclaw/openclaw.json`. Run this first if Feishu has not been onboarded yet:
 
 ```bash
 openclaw channels login --channel feishu
 ```
 
-For multi-app Feishu bots, the same person can have different `open_id` values per app. This script therefore restricts groups by `oc_xxx` chat ID but does not apply a sender allowlist across accounts.
+For multi-app Feishu bots, the same person can have different `open_id` values per app, so this script does not use user `open_id` or group `chat_id` as an allowlist. Groups are open at the OpenClaw channel layer, while `requireMention` keeps bots from replying unless they are mentioned.
 
 Each run rebuilds the Feishu agents/accounts managed by this script, so sub bots omitted from the latest run are removed from the generated OpenClaw config.
 
