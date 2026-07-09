@@ -535,8 +535,9 @@ for group_id in group_ids:
     current = groups.get(group_id, {})
     if not isinstance(current, dict):
         current = {}
+    current["enabled"] = True
     current["requireMention"] = True
-    current["allowFrom"] = [owner_open_id]
+    current.pop("allowFrom", None)
     groups[group_id] = current
 
 feishu.update({
@@ -545,14 +546,14 @@ feishu.update({
     "domain": domain,
     "defaultAccount": main["accountId"],
     "accounts": accounts,
-    "dmPolicy": "allowlist",
-    "allowFrom": [owner_open_id],
+    "dmPolicy": "open",
+    "allowFrom": ["*"],
     "groupPolicy": "allowlist",
-    "groupAllowFrom": group_ids,
     "requireMention": True,
     "groups": groups,
     "streaming": True,
 })
+feishu.pop("groupAllowFrom", None)
 config["channels"]["feishu"] = feishu
 
 def redact(value):

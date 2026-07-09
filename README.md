@@ -91,6 +91,8 @@ The script inherits your Feishu user `open_id` from `channels.feishu.allowFrom[0
 openclaw channels login --channel feishu
 ```
 
+For multi-app Feishu bots, the same person can have different `open_id` values per app. This script therefore restricts groups by `oc_xxx` chat ID but does not apply a sender allowlist across accounts.
+
 Each run rebuilds the Feishu agents/accounts managed by this script, so sub bots omitted from the latest run are removed from the generated OpenClaw config.
 
 Feishu-side requirements:
