@@ -39,7 +39,7 @@ Non-interactive example:
     --domain feishu \\
     --owner-open-id ou_xxx \\
     --group-id oc_xxx \\
-    --main main:cli_main:main_secret:主助手 \\
+    --main main:主助手 \\
     --agent coder:cli_coder:coder_secret:代码:代码助手 \\
     --agent writer:cli_writer:writer_secret:写作:写作助手
 
@@ -47,7 +47,8 @@ Options:
   --domain feishu|lark|https://...        Feishu/Lark API domain. Default: feishu
   --owner-open-id ou_xxx                  Your Feishu open_id.
   --group-id oc_xxx                       Allowed Feishu group chat_id. Can repeat.
-  --main accountId:appId:appSecret:name   Main Feishu app/account.
+  --main accountId:name                   Main Feishu account. Inherits existing onboarded appId/appSecret.
+  --main accountId:appId:appSecret:name   Optional explicit main account override.
   --agent accountId:appId:appSecret:role:name
                                           Sub agent Feishu app/account. Can repeat.
   --no-restart                            Do not validate/restart/probe gateway.
@@ -56,6 +57,7 @@ Options:
 
 Notes:
   - Feishu bot events should use WebSocket / persistent connection.
+  - Run OpenClaw Feishu onboarding first for the main bot: openclaw channels login --channel feishu
   - Each Feishu app should subscribe to im.message.receive_v1.
   - Add every bot app to the target Feishu group before testing.
 EOF
@@ -76,9 +78,23 @@ validate_account_id() {
 
 parse_main_config() {
   local value="$1"
-  IFS=':' read -r main_account_id main_app_id main_app_secret main_name extra <<<"$value"
-  [[ -z "${extra:-}" ]] || die "--main format must be accountId:appId:appSecret:name"
-  [[ -n "${main_account_id:-}" && -n "${main_app_id:-}" && -n "${main_app_secret:-}" && -n "${main_name:-}" ]] || die "--main format must be accountId:appId:appSecret:name"
+  local parts_count
+  parts_count="$(awk -F: '{print NF}' <<<"$value")"
+  local main_account_id main_name main_app_id main_app_secret extra
+  case "$parts_count" in
+    2)
+      IFS=':' read -r main_account_id main_name <<<"$value"
+      [[ -n "${main_account_id:-}" && -n "${main_name:-}" ]] || die "--main format must be accountId:name"
+      ;;
+    4)
+      IFS=':' read -r main_account_id main_app_id main_app_secret main_name extra <<<"$value"
+      [[ -z "${extra:-}" ]] || die "--main format must be accountId:name or accountId:appId:appSecret:name"
+      [[ -n "${main_account_id:-}" && -n "${main_app_id:-}" && -n "${main_app_secret:-}" && -n "${main_name:-}" ]] || die "--main format must be accountId:appId:appSecret:name"
+      ;;
+    *)
+      die "--main format must be accountId:name or accountId:appId:appSecret:name"
+      ;;
+  esac
   validate_account_id "$main_account_id"
 }
 
@@ -140,10 +156,8 @@ collect_interactive() {
   main_account_id="${main_account_id:-main}"
   read -r -p "Main display name [主助手]: " main_name
   main_name="${main_name:-主助手}"
-  read -r -p "Main App ID: " main_app_id
-  read -r -s -p "Main App Secret: " main_app_secret
-  echo
-  MAIN_CONFIG="${main_account_id}:${main_app_id}:${main_app_secret}:${main_name}"
+  MAIN_CONFIG="${main_account_id}:${main_name}"
+  info "Main appId/appSecret will be inherited from the existing onboarded Feishu config."
 
   echo
   echo "--- Sub Feishu agents ---"
@@ -173,8 +187,12 @@ validate_inputs() {
   [[ -n "$MAIN_CONFIG" ]] || die "--main is required"
   parse_main_config "$MAIN_CONFIG"
 
-  local main_account_id main_app_id main_app_secret main_name
-  IFS=':' read -r main_account_id main_app_id main_app_secret main_name <<<"$MAIN_CONFIG"
+  local main_account_id main_name main_app_id main_app_secret
+  if [[ "$(awk -F: '{print NF}' <<<"$MAIN_CONFIG")" -eq 2 ]]; then
+    IFS=':' read -r main_account_id main_name <<<"$MAIN_CONFIG"
+  else
+    IFS=':' read -r main_account_id main_app_id main_app_secret main_name <<<"$MAIN_CONFIG"
+  fi
   local seen_accounts=" $main_account_id "
   local seen_agent_ids=" feishu-main "
 
@@ -201,8 +219,12 @@ write_workspace_file() {
 create_workspace_files() {
   [[ "$DRY_RUN" -eq 0 ]] || return 0
 
-  local main_account_id main_app_id main_app_secret main_name
-  IFS=':' read -r main_account_id main_app_id main_app_secret main_name <<<"$MAIN_CONFIG"
+  local main_account_id main_name main_app_id main_app_secret
+  if [[ "$(awk -F: '{print NF}' <<<"$MAIN_CONFIG")" -eq 2 ]]; then
+    IFS=':' read -r main_account_id main_name <<<"$MAIN_CONFIG"
+  else
+    IFS=':' read -r main_account_id main_app_id main_app_secret main_name <<<"$MAIN_CONFIG"
+  fi
   local main_agent_id="feishu-main"
   local main_workspace="$OPENCLAW_HOME/workspace-$main_agent_id"
   local main_agent_dir="$OPENCLAW_HOME/agents/$main_agent_id/agent"
@@ -309,7 +331,15 @@ def sanitize_id(value: str) -> str:
     return value.strip("-")
 
 def parse_main(value: str) -> dict:
-    account_id, app_id, app_secret, name = value.split(":", 3)
+    parts = value.split(":")
+    if len(parts) == 2:
+        account_id, name = parts
+        app_id = None
+        app_secret = None
+    elif len(parts) == 4:
+        account_id, app_id, app_secret, name = parts
+    else:
+        raise SystemExit("--main format must be accountId:name or accountId:appId:appSecret:name")
     return {
         "accountId": account_id,
         "appId": app_id,
@@ -411,6 +441,42 @@ config.setdefault("channels", {})
 feishu = config["channels"].get("feishu", {})
 if not isinstance(feishu, dict):
     feishu = {}
+
+def inherit_main_credentials(feishu_config: dict, main_account_id: str) -> tuple:
+    app_id = feishu_config.get("appId")
+    app_secret = feishu_config.get("appSecret")
+    accounts_config = feishu_config.get("accounts", {})
+    if not isinstance(accounts_config, dict):
+        accounts_config = {}
+
+    default_account_id = feishu_config.get("defaultAccount")
+    candidates = []
+    for candidate in (main_account_id, default_account_id, "default", "main"):
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+
+    for candidate in candidates:
+        account = accounts_config.get(candidate)
+        if not isinstance(account, dict):
+            continue
+        app_id = app_id or account.get("appId")
+        app_secret = app_secret or account.get("appSecret")
+        if app_id and app_secret:
+            return app_id, app_secret
+
+    return app_id, app_secret
+
+if not main.get("appId") or not main.get("appSecret"):
+    inherited_app_id, inherited_app_secret = inherit_main_credentials(feishu, main["accountId"])
+    main["appId"] = main.get("appId") or inherited_app_id
+    main["appSecret"] = main.get("appSecret") or inherited_app_secret
+
+if not main.get("appId") or not main.get("appSecret"):
+    raise SystemExit(
+        "Could not inherit main Feishu appId/appSecret from existing config. "
+        "Run 'openclaw channels login --channel feishu' first, or pass "
+        "--main accountId:appId:appSecret:name."
+    )
 
 accounts = {}
 accounts[main["accountId"]] = {

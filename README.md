@@ -83,9 +83,15 @@ Non-interactive example:
   --domain feishu \
   --owner-open-id ou_xxx \
   --group-id oc_xxx \
-  --main main:cli_main:main_secret:主助手 \
+  --main main:主助手 \
   --agent coder:cli_coder:coder_secret:代码:代码助手 \
   --agent writer:cli_writer:writer_secret:写作:写作助手
+```
+
+The main account inherits the already-onboarded Feishu `appId` / `appSecret` from `~/.openclaw/openclaw.json`. Run this first if Feishu has not been onboarded yet:
+
+```bash
+openclaw channels login --channel feishu
 ```
 
 Feishu-side requirements:
