@@ -84,8 +84,8 @@ Non-interactive example:
   --owner-open-id ou_xxx \
   --group-id oc_xxx \
   --main main:主助手 \
-  --agent coder:cli_coder:coder_secret:代码:代码助手 \
-  --agent writer:cli_writer:writer_secret:写作:写作助手
+  --agent xiezuo:写作助理:cli_xiezuo:xiezuo_secret \
+  --agent cehua:策划助理:cli_cehua:cehua_secret
 ```
 
 The main account inherits the already-onboarded Feishu `appId` / `appSecret` from `~/.openclaw/openclaw.json`. Run this first if Feishu has not been onboarded yet:

@@ -40,8 +40,8 @@ Non-interactive example:
     --owner-open-id ou_xxx \\
     --group-id oc_xxx \\
     --main main:主助手 \\
-    --agent coder:cli_coder:coder_secret:代码:代码助手 \\
-    --agent writer:cli_writer:writer_secret:写作:写作助手
+    --agent xiezuo:写作助理:cli_xiezuo:xiezuo_secret \\
+    --agent cehua:策划助理:cli_cehua:cehua_secret
 
 Options:
   --domain feishu|lark|https://...        Feishu/Lark API domain. Default: feishu
@@ -49,7 +49,7 @@ Options:
   --group-id oc_xxx                       Allowed Feishu group chat_id. Can repeat.
   --main accountId:name                   Main Feishu account. Inherits existing onboarded appId/appSecret.
   --main accountId:appId:appSecret:name   Optional explicit main account override.
-  --agent accountId:appId:appSecret:role:name
+  --agent accountId:name:appId:appSecret
                                           Sub agent Feishu app/account. Can repeat.
   --no-restart                            Do not validate/restart/probe gateway.
   --dry-run                               Print redacted generated config only.
@@ -100,10 +100,10 @@ parse_main_config() {
 
 parse_agent_config_line() {
   local value="$1"
-  local account_id app_id app_secret role name extra
-  IFS=':' read -r account_id app_id app_secret role name extra <<<"$value"
-  [[ -z "${extra:-}" ]] || die "--agent format must be accountId:appId:appSecret:role:name"
-  [[ -n "${account_id:-}" && -n "${app_id:-}" && -n "${app_secret:-}" && -n "${role:-}" && -n "${name:-}" ]] || die "--agent format must be accountId:appId:appSecret:role:name"
+  local account_id name app_id app_secret extra
+  IFS=':' read -r account_id name app_id app_secret extra <<<"$value"
+  [[ -z "${extra:-}" ]] || die "--agent format must be accountId:name:appId:appSecret"
+  [[ -n "${account_id:-}" && -n "${name:-}" && -n "${app_id:-}" && -n "${app_secret:-}" ]] || die "--agent format must be accountId:name:appId:appSecret"
   validate_account_id "$account_id"
 }
 
@@ -161,18 +161,17 @@ collect_interactive() {
 
   echo
   echo "--- Sub Feishu agents ---"
-  echo "Press Enter on accountId to finish."
+  echo "Format: accountId:name:appId:appSecret"
+  echo "Example: xiezuo:写作助理:cli_xxx:secret_xxx"
+  echo "Press Enter on an empty line to finish."
   while true; do
-    read -r -p "Sub accountId: " sub_account_id
-    [[ -n "$sub_account_id" ]] || break
-    read -r -p "Sub role: " sub_role
-    read -r -p "Sub display name [$sub_account_id]: " sub_name
-    sub_name="${sub_name:-$sub_account_id}"
-    read -r -p "Sub App ID: " sub_app_id
-    read -r -s -p "Sub App Secret: " sub_app_secret
-    echo
-    AGENT_CONFIGS+=("${sub_account_id}:${sub_app_id}:${sub_app_secret}:${sub_role}:${sub_name}")
-    echo "  Added: $sub_account_id / $sub_role / $sub_name"
+    read -r -p "Sub agent: " sub_agent_config
+    [[ -n "$sub_agent_config" ]] || break
+    parse_agent_config_line "$sub_agent_config"
+    AGENT_CONFIGS+=("$sub_agent_config")
+    local sub_account_id sub_name sub_app_id sub_app_secret
+    IFS=':' read -r sub_account_id sub_name sub_app_id sub_app_secret <<<"$sub_agent_config"
+    echo "  Added: $sub_account_id / $sub_name"
   done
 }
 
@@ -199,8 +198,8 @@ validate_inputs() {
   local agent
   for agent in "${AGENT_CONFIGS[@]}"; do
     parse_agent_config_line "$agent"
-    local account_id app_id app_secret role name agent_id
-    IFS=':' read -r account_id app_id app_secret role name <<<"$agent"
+    local account_id name app_id app_secret agent_id
+    IFS=':' read -r account_id name app_id app_secret <<<"$agent"
     agent_id="feishu-$(sanitize_id "$account_id")"
     [[ "$seen_accounts" != *" $account_id "* ]] || die "Duplicate accountId: $account_id"
     [[ "$seen_agent_ids" != *" $agent_id "* ]] || die "Duplicate generated agent id: $agent_id"
@@ -233,11 +232,11 @@ create_workspace_files() {
   local roster="无"
   if [[ "${#AGENT_CONFIGS[@]}" -gt 0 ]]; then
     roster=""
-    local cfg account_id app_id app_secret role name agent_id
+    local cfg account_id name app_id app_secret agent_id
     for cfg in "${AGENT_CONFIGS[@]}"; do
-      IFS=':' read -r account_id app_id app_secret role name <<<"$cfg"
+      IFS=':' read -r account_id name app_id app_secret <<<"$cfg"
       agent_id="feishu-$(sanitize_id "$account_id")"
-      roster="${roster}- ${name} / ${role} / agent id: ${agent_id} / accountId: ${account_id}
+      roster="${roster}- ${name} / agent id: ${agent_id} / accountId: ${account_id}
 "
     done
   fi
@@ -269,9 +268,9 @@ ${roster}
 - 只在被 @mention 时响应。
 - 当明显是 @其他子机器人 的问题时保持沉默，除非用户明确要求我协调。"
 
-  local cfg account_id app_id app_secret role name agent_id workspace agent_dir
+  local cfg account_id name app_id app_secret agent_id workspace agent_dir
   for cfg in "${AGENT_CONFIGS[@]}"; do
-    IFS=':' read -r account_id app_id app_secret role name <<<"$cfg"
+    IFS=':' read -r account_id name app_id app_secret <<<"$cfg"
     agent_id="feishu-$(sanitize_id "$account_id")"
     workspace="$OPENCLAW_HOME/workspace-$agent_id"
     agent_dir="$OPENCLAW_HOME/agents/$agent_id/agent"
@@ -282,12 +281,12 @@ ${roster}
 - Name: ${name}
 - Channel: Feishu
 - Account ID: ${account_id}
-- Role: ${role}"
+- Role: ${name}"
 
     write_workspace_file "$workspace/SOUL.md" "# SOUL.md - 我是谁与如何行为
 
 ## 身份
-我是飞书 ${name}，专业角色是：${role}。
+我是飞书 ${name}。
 
 ## 行为规则
 - 群聊中只在被 @mention 时响应。
@@ -349,12 +348,11 @@ def parse_main(value: str) -> dict:
     }
 
 def parse_agent(value: str) -> dict:
-    account_id, app_id, app_secret, role, name = value.split(":", 4)
+    account_id, name, app_id, app_secret = value.split(":", 3)
     return {
         "accountId": account_id,
         "appId": app_id,
         "appSecret": app_secret,
-        "role": role,
         "name": name,
         "agentId": f"feishu-{sanitize_id(account_id)}",
     }
