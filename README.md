@@ -94,6 +94,8 @@ The main account inherits the already-onboarded Feishu `appId` / `appSecret` fro
 openclaw channels login --channel feishu
 ```
 
+Each run rebuilds the Feishu agents/accounts managed by this script, so sub bots omitted from the latest run are removed from the generated OpenClaw config.
+
 Feishu-side requirements:
 
 - Each Feishu app is published or available to your tenant.

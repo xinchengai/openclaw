@@ -359,6 +359,7 @@ def parse_agent(value: str) -> dict:
 
 main = parse_main(os.environ["MAIN_CONFIG"])
 agents = [parse_agent(x) for x in agent_lines]
+managed_by = "setup_feishu_multi_agent.sh"
 managed_agent_ids = [main["agentId"], *[a["agentId"] for a in agents]]
 account_ids = [main["accountId"], *[a["accountId"] for a in agents]]
 
@@ -380,13 +381,25 @@ config["agents"]["defaults"].setdefault("workspace", str(openclaw_home / "worksp
 existing_agents = config["agents"].get("list", [])
 if not isinstance(existing_agents, list):
     existing_agents = []
-existing_agents = [a for a in existing_agents if a.get("id") not in managed_agent_ids]
+old_managed_agent_ids = {
+    a.get("id")
+    for a in existing_agents
+    if isinstance(a, dict)
+    and (
+        a.get("id") in managed_agent_ids
+        or a.get("id", "").startswith("feishu-")
+        or a.get("meta", {}).get("managedBy") == managed_by
+    )
+}
+old_managed_agent_ids.discard(None)
+existing_agents = [a for a in existing_agents if a.get("id") not in old_managed_agent_ids]
 
 def agent_entry(agent_id: str) -> dict:
     return {
         "id": agent_id,
         "workspace": str(openclaw_home / f"workspace-{agent_id}"),
         "agentDir": str(openclaw_home / "agents" / agent_id / "agent"),
+        "meta": {"managedBy": managed_by},
     }
 
 main_entry = agent_entry(main["agentId"])
@@ -405,7 +418,8 @@ bindings = [
         isinstance(b, dict)
         and b.get("match", {}).get("channel") == "feishu"
         and (
-            b.get("agentId") in managed_agent_ids
+            b.get("agentId") in old_managed_agent_ids
+            or b.get("agentId") in managed_agent_ids
             or b.get("match", {}).get("accountId") in account_ids
         )
     )
@@ -424,6 +438,7 @@ agent_to_agent["enabled"] = True
 allow = agent_to_agent.get("allow", [])
 if not isinstance(allow, list):
     allow = []
+allow = [agent_id for agent_id in allow if agent_id not in old_managed_agent_ids]
 for agent_id in managed_agent_ids:
     if agent_id not in allow:
         allow.append(agent_id)
@@ -482,6 +497,7 @@ accounts[main["accountId"]] = {
     "appSecret": main["appSecret"],
     "name": main["name"],
     "enabled": True,
+    "meta": {"managedBy": managed_by, "inheritedMainCredentials": True},
 }
 for agent in agents:
     accounts[agent["accountId"]] = {
@@ -489,6 +505,7 @@ for agent in agents:
         "appSecret": agent["appSecret"],
         "name": agent["name"],
         "enabled": True,
+        "meta": {"managedBy": managed_by},
     }
 
 groups = feishu.get("groups", {})
