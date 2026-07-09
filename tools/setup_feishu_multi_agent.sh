@@ -37,15 +37,13 @@ Interactive mode:
 Non-interactive example:
   $0 \\
     --domain feishu \\
-    --owner-open-id ou_xxx \\
     --group-id oc_xxx \\
-    --main main:主助手 \\
     --agent xiezuo:写作助理:cli_xiezuo:xiezuo_secret \\
     --agent cehua:策划助理:cli_cehua:cehua_secret
 
 Options:
   --domain feishu|lark|https://...        Feishu/Lark API domain. Default: feishu
-  --owner-open-id ou_xxx                  Your Feishu open_id.
+  --owner-open-id ou_xxx                  Your Feishu open_id. Inherits channels.feishu.allowFrom[0] by default.
   --group-id oc_xxx                       Allowed Feishu group chat_id. Can repeat.
   --main accountId:name                   Main Feishu account. Inherits existing onboarded appId/appSecret.
   --main accountId:appId:appSecret:name   Optional explicit main account override.
@@ -136,6 +134,38 @@ ensure_feishu_plugin_hint() {
   warn "If gateway startup fails, run: openclaw channels login --channel feishu"
 }
 
+inherit_owner_open_id() {
+  [[ -z "$OWNER_OPEN_ID" ]] || return 0
+  [[ -f "$OPENCLAW_CONFIG" ]] || return 0
+
+  local inherited
+  inherited="$(python3 - "$OPENCLAW_CONFIG" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1]).expanduser()
+try:
+    config = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(0)
+
+feishu = config.get("channels", {}).get("feishu", {})
+allow_from = feishu.get("allowFrom", [])
+if isinstance(allow_from, list):
+    for item in allow_from:
+        if isinstance(item, str) and item.startswith("ou_"):
+            print(item)
+            break
+PY
+)"
+
+  if [[ -n "$inherited" ]]; then
+    OWNER_OPEN_ID="$inherited"
+    info "Inherited owner open_id from existing Feishu config: $OWNER_OPEN_ID"
+  fi
+}
+
 collect_interactive() {
   echo
   echo "============================================"
@@ -146,18 +176,15 @@ collect_interactive() {
   read -r -p "Feishu domain [feishu]: " input_domain
   DOMAIN="${input_domain:-feishu}"
 
-  read -r -p "Your Feishu open_id (ou_xxx): " OWNER_OPEN_ID
+  inherit_owner_open_id
+  if [[ -z "$OWNER_OPEN_ID" ]]; then
+    read -r -p "Your Feishu open_id (ou_xxx): " OWNER_OPEN_ID
+  fi
   read -r -p "Allowed group chat_id (oc_xxx): " input_group_id
   GROUP_IDS=("$input_group_id")
 
-  echo
-  echo "--- Main Feishu app ---"
-  read -r -p "Main accountId [main]: " main_account_id
-  main_account_id="${main_account_id:-main}"
-  read -r -p "Main display name [主助手]: " main_name
-  main_name="${main_name:-主助手}"
-  MAIN_CONFIG="${main_account_id}:${main_name}"
-  info "Main appId/appSecret will be inherited from the existing onboarded Feishu config."
+  MAIN_CONFIG="${MAIN_CONFIG:-main:主助理}"
+  info "Main account is fixed as main:主助理 and inherits onboarded appId/appSecret."
 
   echo
   echo "--- Sub Feishu agents ---"
@@ -621,7 +648,9 @@ main() {
 
   require_cmd python3
   check_openclaw
-  if [[ -z "$OWNER_OPEN_ID" || "${#GROUP_IDS[@]}" -eq 0 || -z "$MAIN_CONFIG" ]]; then
+  inherit_owner_open_id
+  MAIN_CONFIG="${MAIN_CONFIG:-main:主助理}"
+  if [[ "${#GROUP_IDS[@]}" -eq 0 ]]; then
     collect_interactive
   fi
   validate_inputs
