@@ -80,7 +80,6 @@ Non-interactive example:
 
 ```bash
 ./setup_feishu_multi_agent.sh \
-  --domain feishu \
   --group-id oc_xxx \
   --agent xiezuo:写作助理:cli_xiezuo:xiezuo_secret \
   --agent cehua:策划助理:cli_cehua:cehua_secret

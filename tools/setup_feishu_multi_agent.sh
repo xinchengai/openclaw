@@ -173,9 +173,6 @@ collect_interactive() {
   echo "============================================"
   echo
 
-  read -r -p "Feishu domain [feishu]: " input_domain
-  DOMAIN="${input_domain:-feishu}"
-
   inherit_owner_open_id
   if [[ -z "$OWNER_OPEN_ID" ]]; then
     read -r -p "Your Feishu open_id (ou_xxx): " OWNER_OPEN_ID
@@ -415,7 +412,6 @@ old_managed_agent_ids = {
     and (
         a.get("id") in managed_agent_ids
         or a.get("id", "").startswith("feishu-")
-        or a.get("meta", {}).get("managedBy") == managed_by
     )
 }
 old_managed_agent_ids.discard(None)
@@ -426,7 +422,6 @@ def agent_entry(agent_id: str) -> dict:
         "id": agent_id,
         "workspace": str(openclaw_home / f"workspace-{agent_id}"),
         "agentDir": str(openclaw_home / "agents" / agent_id / "agent"),
-        "meta": {"managedBy": managed_by},
     }
 
 main_entry = agent_entry(main["agentId"])
@@ -524,7 +519,6 @@ accounts[main["accountId"]] = {
     "appSecret": main["appSecret"],
     "name": main["name"],
     "enabled": True,
-    "meta": {"managedBy": managed_by, "inheritedMainCredentials": True},
 }
 for agent in agents:
     accounts[agent["accountId"]] = {
@@ -532,7 +526,6 @@ for agent in agents:
         "appSecret": agent["appSecret"],
         "name": agent["name"],
         "enabled": True,
-        "meta": {"managedBy": managed_by},
     }
 
 groups = feishu.get("groups", {})
