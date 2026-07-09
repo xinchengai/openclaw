@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_VERSION="1.0.0"
 OPENCLAW_CONFIG="${OPENCLAW_CONFIG:-$HOME/.openclaw/openclaw.json}"
-OPENCLAW_HOME="${OPENCLAW_HOME:-$HOME/.openclaw}"
+OPENCLAW_DATA_DIR="${OPENCLAW_DATA_DIR:-$HOME/.openclaw}"
 DOMAIN="feishu"
 OWNER_OPEN_ID=""
 GROUP_IDS=()
@@ -225,8 +225,8 @@ create_workspace_files() {
     IFS=':' read -r main_account_id main_app_id main_app_secret main_name <<<"$MAIN_CONFIG"
   fi
   local main_agent_id="feishu-main"
-  local main_workspace="$OPENCLAW_HOME/workspace-$main_agent_id"
-  local main_agent_dir="$OPENCLAW_HOME/agents/$main_agent_id/agent"
+  local main_workspace="$OPENCLAW_DATA_DIR/workspace-$main_agent_id"
+  local main_agent_dir="$OPENCLAW_DATA_DIR/agents/$main_agent_id/agent"
   mkdir -p "$main_workspace" "$main_agent_dir"
 
   local roster="无"
@@ -272,8 +272,8 @@ ${roster}
   for cfg in "${AGENT_CONFIGS[@]}"; do
     IFS=':' read -r account_id name app_id app_secret <<<"$cfg"
     agent_id="feishu-$(sanitize_id "$account_id")"
-    workspace="$OPENCLAW_HOME/workspace-$agent_id"
-    agent_dir="$OPENCLAW_HOME/agents/$agent_id/agent"
+    workspace="$OPENCLAW_DATA_DIR/workspace-$agent_id"
+    agent_dir="$OPENCLAW_DATA_DIR/agents/$agent_id/agent"
     mkdir -p "$workspace" "$agent_dir"
 
     write_workspace_file "$workspace/IDENTITY.md" "# IDENTITY.md - Who Am I?
@@ -302,7 +302,7 @@ ${roster}
 }
 
 build_config() {
-  export OPENCLAW_CONFIG OPENCLAW_HOME DOMAIN OWNER_OPEN_ID MAIN_CONFIG DRY_RUN
+  export OPENCLAW_CONFIG OPENCLAW_DATA_DIR DOMAIN OWNER_OPEN_ID MAIN_CONFIG DRY_RUN
   export GROUP_IDS_JOINED="$(IFS=$'\n'; printf '%s' "${GROUP_IDS[*]}")"
   export AGENT_CONFIGS_JOINED="$(IFS=$'\n'; printf '%s' "${AGENT_CONFIGS[*]:-}")"
 
@@ -316,7 +316,7 @@ from datetime import datetime
 from pathlib import Path
 
 config_path = Path(os.environ["OPENCLAW_CONFIG"]).expanduser()
-openclaw_home = Path(os.environ["OPENCLAW_HOME"]).expanduser()
+openclaw_home = Path(os.environ["OPENCLAW_DATA_DIR"]).expanduser()
 domain = os.environ["DOMAIN"]
 owner_open_id = os.environ["OWNER_OPEN_ID"]
 dry_run = os.environ["DRY_RUN"] == "1"
